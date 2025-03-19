@@ -7,185 +7,214 @@
     <script src="https://cdn.jsdelivr.net/npm/opencv.js"></script> <!-- OpenCV.js -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js"></script> <!-- Tesseract.js for OCR -->
     <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        #canvas {
+            margin-top: 20px;
+            border: 1px solid #000;
+            max-width: 100%;
+        }
         #result {
             white-space: pre-wrap;
             font-family: monospace;
             margin-top: 20px;
+            padding: 10px;
+            background-color: #f4f4f4;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            max-width: 100%;
         }
-        canvas {
-            border: 1px solid #000;
+        #fileInput {
+            margin: 10px 0;
+        }
+        .loading {
+            display: none;
+            font-weight: bold;
+            color: #ff0000;
         }
     </style>
 </head>
 <body>
-    <h2>Upload OMR Sheet</h2>
-    <input type="file" id="fileInput" accept="image/*" />
-    <div id="fileName">No file selected</div>
-    <canvas id="canvas"></canvas>
-    <div id="result"></div>
 
-    <script>
-        // Define coordinates for key data areas (in pixels)
-        const dataRegions = {
-            rollNumber: { x: 240, y: 750, width: 100, height: 50 }, // Roll number area
-            group: { x: 480, y: 750, width: 100, height: 50 }, // Group area
-            set: { x: 620, y: 750, width: 100, height: 50 }, // Set area
-            mobileNumber: { x: 240, y: 800, width: 200, height: 50 }, // Mobile number area
-        };
+<h2>Upload OMR Sheet for Data Extraction</h2>
+<input type="file" id="fileInput" accept="image/*">
+<div id="fileName">No file selected</div>
+<div id="loading" class="loading">Processing the OMR Sheet...</div>
+<canvas id="canvas"></canvas>
+<div id="result"></div>
 
-        // Define coordinates for question sections (question numbers and answer options)
-        const questionSections = [
-            { x: 284, y: 1640, width: 142, height: 200 }, // 1st section (question 1-20)
-            { x: 615, y: 1640, width: 118, height: 200 }, // 2nd section (question 21-40)
-            { x: 811, y: 1640, width: 181, height: 200 }, // 3rd section (question 41-60)
-            { x: 1075, y: 1640, width: 181, height: 200 }, // 4th section (question 61-80)
-            { x: 1339, y: 1640, width: 173, height: 200 }  // 5th section (question 81-100)
-        ];
+<script>
+    // Coordinates for extracting key data
+    const dataRegions = {
+        rollNumber: { x: 240, y: 750, width: 100, height: 50 },
+        group: { x: 480, y: 750, width: 100, height: 50 },
+        set: { x: 620, y: 750, width: 100, height: 50 },
+        mobileNumber: { x: 240, y: 800, width: 200, height: 50 }
+    };
 
-        // Handle file input change
-        document.getElementById('fileInput').addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (file) {
-                // Show the uploaded file name
-                document.getElementById('fileName').innerText = `Uploaded file: ${file.name}`;
-                const reader = new FileReader();
-                reader.onload = function (e) {
-                    const img = new Image();
-                    img.src = e.target.result;
-                    img.onload = function () {
-                        const canvas = document.getElementById('canvas');
-                        canvas.width = img.width;
-                        canvas.height = img.height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-                        processOMRData(canvas); // Process the OMR sheet after loading the image
-                    };
+    // Coordinates for extracting the answers for each question section
+    const questionSections = [
+        { x: 284, y: 1640, width: 142, height: 200 },
+        { x: 615, y: 1640, width: 118, height: 200 },
+        { x: 811, y: 1640, width: 181, height: 200 },
+        { x: 1075, y: 1640, width: 181, height: 200 },
+        { x: 1339, y: 1640, width: 173, height: 200 }
+    ];
+
+    // Handle file input
+    document.getElementById('fileInput').addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            document.getElementById('fileName').innerText = `Uploaded file: ${file.name}`;
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = function () {
+                    processImage(img);
                 };
-                reader.readAsDataURL(file);
-            }
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Process the image
+    function processImage(img) {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+
+        // Initialize OpenCV.js and process the image
+        const mat = cv.imread(canvas);
+        cv.cvtColor(mat, mat, cv.COLOR_RGBA2GRAY);  // Convert to grayscale
+        cv.adaptiveThreshold(mat, mat, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 11, 2);  // Thresholding
+
+        extractData(mat);  // Extract data after processing the image
+    }
+
+    // Extract key data (roll number, group, set, mobile number)
+    function extractData(mat) {
+        const dataPromises = Object.keys(dataRegions).map(key => {
+            const region = dataRegions[key];
+            const croppedImage = mat.roi(new cv.Rect(region.x, region.y, region.width, region.height));
+            const dataUrl = cv.imencode('.png', croppedImage).toString('base64');
+            return extractTextFromRegion('data:image/png;base64,' + dataUrl);
         });
 
-        // Function to process OMR sheet and extract data (roll number, group, set, mobile number, answers)
-        function processOMRData(imageData) {
-            const mat = cv.imread(imageData); // Read the image into an OpenCV mat
-            cv.cvtColor(mat, mat, cv.COLOR_RGBA2GRAY); // Convert to grayscale
-
-            // Apply thresholding to make marks clearer
-            cv.adaptiveThreshold(mat, mat, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 11, 2);
-
-            // Extract Roll Number, Group, Set, Mobile Number using OCR
-            const dataPromises = Object.keys(dataRegions).map(key => {
-                const region = dataRegions[key];
-                const sectionImage = mat.roi(new cv.Rect(region.x, region.y, region.width, region.height));
-                const dataUrl = cv.imencode('.png', sectionImage).toString('base64');
-                return extractTextFromRegion('data:image/png;base64,' + dataUrl);
-            });
-
-            Promise.all(dataPromises)
-                .then(allData => {
-                    const extractedData = {
-                        rollNumber: allData[0], // Roll Number
-                        group: allData[1], // Group
-                        set: allData[2], // Set
-                        mobileNumber: allData[3], // Mobile Number
-                    };
-
-                    // Process each section of questions and extract answers
-                    const allAnswers = [];
-                    questionSections.forEach((section, index) => {
-                        const sectionAnswers = extractQuestionAnswers(mat, section, index + 1);
-                        allAnswers.push(sectionAnswers);
-                    });
-
-                    // Display the results
-                    displayResults(extractedData, allAnswers);
-                    mat.delete(); // Clean up OpenCV mat
-                })
-                .catch(error => console.error('Error extracting data:', error));
-        }
-
-        // Function to extract answers from each section (A, B, C, D)
-        function extractQuestionAnswers(mat, section, sectionIndex) {
-            const { x, y, width, height } = section;
-
-            // Extract the region of the section where answers are located
-            const questionArea = mat.roi(new cv.Rect(x, y, width, height));
-            cv.cvtColor(questionArea, questionArea, cv.COLOR_RGBA2GRAY);
-            cv.threshold(questionArea, questionArea, 128, 255, cv.THRESH_BINARY);
-
-            // Process each question (20 questions per section)
-            const questionAnswers = [];
-            for (let i = 0; i < 20; i++) {
-                const optionA = checkFilledBubble(questionArea, i, 'A');
-                const optionB = checkFilledBubble(questionArea, i, 'B');
-                const optionC = checkFilledBubble(questionArea, i, 'C');
-                const optionD = checkFilledBubble(questionArea, i, 'D');
-
-                questionAnswers.push({
-                    question: (sectionIndex - 1) * 20 + i + 1,
-                    A: optionA,
-                    B: optionB,
-                    C: optionC,
-                    D: optionD
-                });
-            }
-            return questionAnswers;
-        }
-
-        // Function to detect if a bubble (A, B, C, D) is filled for each question
-        function checkFilledBubble(sectionImage, questionIndex, option) {
-            // Placeholder logic for detecting filled bubbles (A, B, C, D)
-            // Assuming a fixed grid for answers, adjust the coordinates based on the OMR layout
-            const bubbleX = 50; // X position of the bubble (adjust based on layout)
-            const bubbleY = 40 * questionIndex; // Y position of the bubble (adjust based on layout)
-
-            const bubble = sectionImage.roi(new cv.Rect(bubbleX, bubbleY, 20, 20));
-            const meanColor = cv.mean(bubble);
-            bubble.delete();
-
-            // If the average color is darker than a certain threshold, assume the bubble is filled
-            return meanColor[0] < 100; // Adjust this threshold based on the bubble's filled color
-        }
-
-        // Function to extract text from specific regions (like Roll Number, Group, Set, Mobile Number) using OCR
-        function extractTextFromRegion(image, region) {
-            return new Promise((resolve, reject) => {
-                const imageElement = document.createElement('img');
-                imageElement.src = image;
-                imageElement.onload = function () {
-                    Tesseract.recognize(
-                        imageElement,
-                        'eng',
-                        {
-                            logger: m => console.log(m)
-                        }
-                    ).then(({ data: { text } }) => {
-                        resolve(text.trim());
-                    }).catch(err => reject(err));
+        Promise.all(dataPromises)
+            .then(allData => {
+                const extractedData = {
+                    rollNumber: allData[0],  // Extracted roll number
+                    group: allData[1],       // Extracted group
+                    set: allData[2],         // Extracted set
+                    mobileNumber: allData[3] // Extracted mobile number
                 };
-            });
-        }
 
-        // Function to display the extracted data (Roll Number, Group, Set, Mobile Number, Answers)
-        function displayResults(extractedData, allAnswers) {
-            const resultDiv = document.getElementById('result');
-            let resultText = 'Extracted Data:\n\n';
-            resultText += `Roll Number: ${extractedData.rollNumber}\n`;
-            resultText += `Group: ${extractedData.group}\n`;
-            resultText += `Set: ${extractedData.set}\n`;
-            resultText += `Mobile Number: ${extractedData.mobileNumber}\n\n`;
-
-            resultText += 'Extracted Answers:\n\n';
-            allAnswers.forEach((sectionAnswers, sectionIndex) => {
-                resultText += `Section ${sectionIndex + 1} Answers:\n`;
-                sectionAnswers.forEach(answer => {
-                    resultText += `  Question ${answer.question}: A=${answer.A}, B=${answer.B}, C=${answer.C}, D=${answer.D}\n`;
+                // Process the question sections
+                const answers = questionSections.map((section, index) => {
+                    return extractAnswers(mat, section, index + 1);
                 });
-            });
 
-            // Append the result text directly into the result div
-            resultDiv.textContent = resultText;
+                // Wait until all answers are extracted and display results
+                Promise.all(answers).then(allAnswers => {
+                    displayResults(extractedData, allAnswers);
+                });
+
+                mat.delete();  // Clean up
+            })
+            .catch(error => {
+                console.error('Error extracting data:', error);
+            });
+    }
+
+    // Extract answer choices (A, B, C, D) for each question section
+    function extractAnswers(mat, section, sectionIndex) {
+        const { x, y, width, height } = section;
+        const croppedSection = mat.roi(new cv.Rect(x, y, width, height));
+        cv.cvtColor(croppedSection, croppedSection, cv.COLOR_RGBA2GRAY);
+        cv.threshold(croppedSection, croppedSection, 128, 255, cv.THRESH_BINARY);
+
+        const answers = [];
+        for (let i = 0; i < 20; i++) {
+            const options = ['A', 'B', 'C', 'D'].map(option => checkFilledBubble(croppedSection, i, option));
+            answers.push({
+                question: (sectionIndex - 1) * 20 + i + 1,
+                A: options[0],
+                B: options[1],
+                C: options[2],
+                D: options[3]
+            });
         }
-    </script>
+
+        return answers;
+    }
+
+    // Check if a bubble is filled for a specific question
+    function checkFilledBubble(sectionImage, questionIndex, option) {
+        const bubbleCoordinates = getBubbleCoordinates(option, questionIndex);
+        const bubble = sectionImage.roi(new cv.Rect(bubbleCoordinates.x, bubbleCoordinates.y, 20, 20));
+        const meanColor = cv.mean(bubble);
+        bubble.delete();
+        return meanColor[0] < 100; // Return true if the bubble is filled (darker color)
+    }
+
+    // Get the coordinates for a specific bubble (A, B, C, D) for a question
+    function getBubbleCoordinates(option, questionIndex) {
+        const bubbleSpacing = 40;
+        const baseX = 50;
+        const baseY = 40 * questionIndex;
+        const offsets = { A: 0, B: 40, C: 80, D: 120 };
+        return { x: baseX + offsets[option], y: baseY };
+    }
+
+    // Extract text from image region using Tesseract.js
+    function extractTextFromRegion(image, region) {
+        return new Promise((resolve, reject) => {
+            const imgElement = document.createElement('img');
+            imgElement.src = image;
+            imgElement.onload = function () {
+                Tesseract.recognize(
+                    imgElement,
+                    'eng',
+                    {
+                        logger: m => console.log(m)
+                    }
+                ).then(({ data: { text } }) => {
+                    resolve(text.trim());
+                }).catch(err => reject(err));
+            };
+        });
+    }
+
+    // Display the extracted results on the page
+    function displayResults(extractedData, allAnswers) {
+        const resultDiv = document.getElementById('result');
+        let resultText = 'Extracted Data:\n\n';
+        resultText += `Roll Number: ${extractedData.rollNumber}\n`;
+        resultText += `Group: ${extractedData.group}\n`;
+        resultText += `Set: ${extractedData.set}\n`;
+        resultText += `Mobile Number: ${extractedData.mobileNumber}\n\n`;
+
+        resultText += 'Extracted Answers:\n\n';
+        allAnswers.forEach((sectionAnswers, sectionIndex) => {
+            resultText += `Section ${sectionIndex + 1} Answers:\n`;
+            sectionAnswers.forEach(answer => {
+                resultText += `  Question ${answer.question}: A=${answer.A}, B=${answer.B}, C=${answer.C}, D=${answer.D}\n`;
+            });
+        });
+
+        resultDiv.textContent = resultText;
+        document.getElementById('loading').style.display = 'none'; // Hide loading text after processing
+    }
+
+    // Show loading text while processing
+    function showLoading() {
+        document.getElementById('loading').style.display = 'block';
+    }
+</script>
+
 </body>
 </html>
