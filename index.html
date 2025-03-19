@@ -10,6 +10,7 @@
         #result {
             white-space: pre-wrap;
             font-family: monospace;
+            margin-top: 20px;
         }
         canvas {
             display: none;
@@ -19,6 +20,7 @@
 <body>
     <h2>Upload OMR Sheet</h2>
     <input type="file" id="fileInput" accept="image/*" />
+    <div id="fileName">No file selected</div>
     <canvas id="canvas"></canvas>
     <div id="result"></div>
 
@@ -40,10 +42,33 @@
             { x: 1339, y: 1640, width: 173, height: 200 }  // 5th section (question 81-100)
         ];
 
-        // Function to process OMR sheet and extract all data (roll number, group, set, mobile number, questions & answers)
+        // Handle file input change
+        document.getElementById('fileInput').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                // Show the uploaded file name
+                document.getElementById('fileName').innerText = `Uploaded file: ${file.name}`;
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = function () {
+                        const canvas = document.getElementById('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        processOMRData(canvas); // Process the OMR sheet after loading the image
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Function to process OMR sheet and extract data (roll number, group, set, mobile number, answers)
         function processOMRData(imageData) {
-            const mat = cv.imread(imageData);
-            cv.cvtColor(mat, mat, cv.COLOR_RGBA2GRAY);
+            const mat = cv.imread(imageData); // Read the image into an OpenCV mat
+            cv.cvtColor(mat, mat, cv.COLOR_RGBA2GRAY); // Convert to grayscale
 
             // Apply thresholding to make marks clearer
             cv.adaptiveThreshold(mat, mat, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 11, 2);
@@ -160,27 +185,6 @@
 
             resultDiv.textContent = resultText;
         }
-
-        // Handle image file input
-        document.getElementById('fileInput').addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function (e) {
-                    const img = new Image();
-                    img.src = e.target.result;
-                    img.onload = function () {
-                        const canvas = document.getElementById('canvas');
-                        canvas.width = img.width;
-                        canvas.height = img.height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-                        processOMRData(canvas);
-                    };
-                };
-                reader.readAsDataURL(file);
-            }
-        });
     </script>
 </body>
 </html>
