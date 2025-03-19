@@ -21,12 +21,23 @@
         #results {
             margin-top: 20px;
         }
+        #status {
+            margin-top: 20px;
+            font-weight: bold;
+            color: green;
+        }
+        #error {
+            margin-top: 20px;
+            font-weight: bold;
+            color: red;
+        }
     </style>
 </head>
 <body>
 
 <h1>OMR Sheet Data Extraction</h1>
 <input type="file" id="fileInput" accept="image/*">
+<div id="status"></div> <!-- Display success message here -->
 <canvas id="canvas"></canvas>
 <div id="results">
     <h2>Extracted Data</h2>
@@ -36,6 +47,7 @@
     <p><strong>Mobile No:</strong> <span id="mobileNo"></span></p>
     <p><strong>Questions:</strong> <span id="questions"></span></p>
 </div>
+<div id="error"></div> <!-- Display error message here -->
 
 <script>
     document.getElementById('fileInput').addEventListener('change', handleFileUpload);
@@ -53,6 +65,13 @@
                     canvas.height = img.height;
                     ctx.drawImage(img, 0, 0);
 
+                    // Display success message after image is uploaded
+                    document.getElementById('status').textContent = "Image uploaded successfully! Processing data...";
+
+                    // Reset the error and results before extracting data
+                    document.getElementById('error').textContent = '';
+                    document.getElementById('results').style.display = 'none';
+
                     extractData(canvas);
                 };
                 img.src = e.target.result;
@@ -67,7 +86,8 @@
         // Using Tesseract.js to OCR the text in the image
         Tesseract.recognize(mat, 'eng', { logger: (m) => console.log(m) })
             .then(({ data: { text, blocks } }) => {
-                console.log('Detected Text:', text);
+                console.log('OCR Text:', text);
+                console.log('Text Blocks:', blocks);
 
                 // Extract Roll No, Set Code, Group, Mobile No
                 let rollNoTextBlock = blocks.find(block => block.text.includes("ROLL NO."));
@@ -75,12 +95,27 @@
                 let groupCodeTextBlock = blocks.find(block => block.text.includes("GROUP"));
                 let mobileNoTextBlock = blocks.find(block => block.text.includes("MOBILE NO."));
 
+                // Debugging: Log found text blocks
+                console.log('Found Roll No Block:', rollNoTextBlock);
+                console.log('Found Set Code Block:', setCodeTextBlock);
+                console.log('Found Group Code Block:', groupCodeTextBlock);
+                console.log('Found Mobile No Block:', mobileNoTextBlock);
+
+                let extractedData = {
+                    rollNo: '',
+                    setCode: '',
+                    groupCode: '',
+                    mobileNo: '',
+                    questions: ''
+                };
+
                 if (rollNoTextBlock) {
                     let rollNoX = rollNoTextBlock.bbox[0];
                     let rollNoY = rollNoTextBlock.bbox[1];
                     let rollNoRegion = mat.roi(new cv.Rect(rollNoX, rollNoY + 20, 200, 50));
                     Tesseract.recognize(rollNoRegion, 'eng').then(({ data: { text } }) => {
-                        document.getElementById('rollNo').textContent = text.trim();
+                        extractedData.rollNo = text.trim();
+                        document.getElementById('rollNo').textContent = extractedData.rollNo;
                     });
                 }
 
@@ -89,7 +124,8 @@
                     let setCodeY = setCodeTextBlock.bbox[1];
                     let setCodeRegion = mat.roi(new cv.Rect(setCodeX, setCodeY + 20, 200, 50));
                     Tesseract.recognize(setCodeRegion, 'eng').then(({ data: { text } }) => {
-                        document.getElementById('setCode').textContent = text.trim();
+                        extractedData.setCode = text.trim();
+                        document.getElementById('setCode').textContent = extractedData.setCode;
                     });
                 }
 
@@ -98,7 +134,8 @@
                     let groupCodeY = groupCodeTextBlock.bbox[1];
                     let groupCodeRegion = mat.roi(new cv.Rect(groupCodeX, groupCodeY + 20, 200, 50));
                     Tesseract.recognize(groupCodeRegion, 'eng').then(({ data: { text } }) => {
-                        document.getElementById('groupCode').textContent = text.trim();
+                        extractedData.groupCode = text.trim();
+                        document.getElementById('groupCode').textContent = extractedData.groupCode;
                     });
                 }
 
@@ -107,7 +144,8 @@
                     let mobileNoY = mobileNoTextBlock.bbox[1];
                     let mobileNoRegion = mat.roi(new cv.Rect(mobileNoX, mobileNoY + 20, 200, 50));
                     Tesseract.recognize(mobileNoRegion, 'eng').then(({ data: { text } }) => {
-                        document.getElementById('mobileNo').textContent = text.trim();
+                        extractedData.mobileNo = text.trim();
+                        document.getElementById('mobileNo').textContent = extractedData.mobileNo;
                     });
                 }
 
@@ -125,7 +163,17 @@
                     });
                 }
 
+                // Once all data is processed, show the results
+                document.getElementById('results').style.display = 'block';
+
+                // Clear the status message
+                document.getElementById('status').textContent = "Data extracted successfully!";
                 mat.delete();  // Clean up OpenCV mat
+            })
+            .catch(err => {
+                console.error('OCR error:', err);
+                document.getElementById('error').textContent = 'Error extracting data. Please try again.';
+                document.getElementById('status').textContent = '';  // Clear the success message
             });
     }
 </script>
