@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMR Sheet Data Extraction</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/opencv/4.5.1/opencv.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.1/dist/tesseract.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        canvas {
+            border: 1px solid #000;
+            margin-top: 20px;
+        }
+        input[type="file"] {
+            margin: 20px 0;
+        }
+        #results {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>OMR Sheet Data Extraction</h1>
+<input type="file" id="fileInput" accept="image/*">
+<canvas id="canvas"></canvas>
+<div id="results">
+    <h2>Extracted Data</h2>
+    <p><strong>Roll No:</strong> <span id="rollNo"></span></p>
+    <p><strong>Set Code:</strong> <span id="setCode"></span></p>
+    <p><strong>Group Code:</strong> <span id="groupCode"></span></p>
+    <p><strong>Mobile No:</strong> <span id="mobileNo"></span></p>
+    <p><strong>Questions:</strong> <span id="questions"></span></p>
+</div>
+
+<script>
+    document.getElementById('fileInput').addEventListener('change', handleFileUpload);
+
+    function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.getElementById('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+
+                    extractData(canvas);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
+    function extractData(canvas) {
+        const mat = cv.imread(canvas);
+        
+        // Using Tesseract.js to OCR the text in the image
+        Tesseract.recognize(mat, 'eng', { logger: (m) => console.log(m) })
+            .then(({ data: { text, blocks } }) => {
+                console.log('Detected Text:', text);
+
+                // Extract Roll No, Set Code, Group, Mobile No
+                let rollNoTextBlock = blocks.find(block => block.text.includes("ROLL NO."));
+                let setCodeTextBlock = blocks.find(block => block.text.includes("SET CODE"));
+                let groupCodeTextBlock = blocks.find(block => block.text.includes("GROUP"));
+                let mobileNoTextBlock = blocks.find(block => block.text.includes("MOBILE NO."));
+
+                if (rollNoTextBlock) {
+                    let rollNoX = rollNoTextBlock.bbox[0];
+                    let rollNoY = rollNoTextBlock.bbox[1];
+                    let rollNoRegion = mat.roi(new cv.Rect(rollNoX, rollNoY + 20, 200, 50));
+                    Tesseract.recognize(rollNoRegion, 'eng').then(({ data: { text } }) => {
+                        document.getElementById('rollNo').textContent = text.trim();
+                    });
+                }
+
+                if (setCodeTextBlock) {
+                    let setCodeX = setCodeTextBlock.bbox[0];
+                    let setCodeY = setCodeTextBlock.bbox[1];
+                    let setCodeRegion = mat.roi(new cv.Rect(setCodeX, setCodeY + 20, 200, 50));
+                    Tesseract.recognize(setCodeRegion, 'eng').then(({ data: { text } }) => {
+                        document.getElementById('setCode').textContent = text.trim();
+                    });
+                }
+
+                if (groupCodeTextBlock) {
+                    let groupCodeX = groupCodeTextBlock.bbox[0];
+                    let groupCodeY = groupCodeTextBlock.bbox[1];
+                    let groupCodeRegion = mat.roi(new cv.Rect(groupCodeX, groupCodeY + 20, 200, 50));
+                    Tesseract.recognize(groupCodeRegion, 'eng').then(({ data: { text } }) => {
+                        document.getElementById('groupCode').textContent = text.trim();
+                    });
+                }
+
+                if (mobileNoTextBlock) {
+                    let mobileNoX = mobileNoTextBlock.bbox[0];
+                    let mobileNoY = mobileNoTextBlock.bbox[1];
+                    let mobileNoRegion = mat.roi(new cv.Rect(mobileNoX, mobileNoY + 20, 200, 50));
+                    Tesseract.recognize(mobileNoRegion, 'eng').then(({ data: { text } }) => {
+                        document.getElementById('mobileNo').textContent = text.trim();
+                    });
+                }
+
+                // Extract Questions from the bottom part of the sheet
+                let questionStartY = 600;  // Example Y start position for questions (adjust based on OMR sheet)
+                let questionHeight = 50;   // Height of each question (adjust accordingly)
+                let questionWidth = 150;   // Width of each question (adjust accordingly)
+
+                let questions = '';
+                for (let i = 0; i < 100; i++) {
+                    let questionRegion = mat.roi(new cv.Rect(50, questionStartY + (i * questionHeight), questionWidth, questionHeight));
+                    Tesseract.recognize(questionRegion, 'eng').then(({ data: { text } }) => {
+                        questions += `Question ${i + 1}: ${text.trim()}<br>`;
+                        document.getElementById('questions').innerHTML = questions;
+                    });
+                }
+
+                mat.delete();  // Clean up OpenCV mat
+            });
+    }
+</script>
+
+</body>
+</html>
