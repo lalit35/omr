@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMR Sheet Masking with Answer "A"</title>
-    <script src="https://cdn.jsdelivr.net/npm/opencv.js"></script> <!-- OpenCV.js -->
+    <title>OMR Sheet Masking with Correct Answers</title>
+    <script async src="https://cdn.jsdelivr.net/npm/opencv.js"></script> <!-- OpenCV.js -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js"></script> <!-- Tesseract.js for OCR -->
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -12,6 +13,17 @@
         #canvas {
             margin-top: 20px;
             border: 1px solid #000;
+            max-width: 100%;
+            cursor: pointer;
+        }
+        #result {
+            white-space: pre-wrap;
+            font-family: monospace;
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f4f4f4;
+            border: 1px solid #ccc;
+            border-radius: 5px;
             max-width: 100%;
         }
         #fileInput {
@@ -22,17 +34,37 @@
             font-weight: bold;
             color: #ff0000;
         }
+        #downloadBtn, #downloadDataBtn {
+            margin-top: 20px;
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #downloadBtn:hover, #downloadDataBtn:hover {
+            background-color: #45a049;
+        }
+        #zoomSlider {
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
 
-<h2>Upload OMR Sheet for Masking (Assume All Answers are "A")</h2>
+<h2>Upload OMR Sheet for Masking and Correct Answers Highlight</h2>
 <input type="file" id="fileInput" accept="image/*">
+<div id="fileName">No file selected</div>
 <div id="loading" class="loading">Processing the OMR Sheet...</div>
 <canvas id="canvas"></canvas>
+<div id="result"></div>
+<button id="downloadBtn" style="display: none;">Download Processed Image</button>
+<button id="downloadDataBtn" style="display: none;">Download Data as JSON</button>
+<br>
+Zoom Level: <input type="range" id="zoomSlider" min="1" max="3" step="0.1" value="1">
 
 <script>
-    // Coordinates for extracting key data (same as before)
     const dataRegions = {
         rollNumber: { x: 240, y: 750, width: 100, height: 50 },
         group: { x: 480, y: 750, width: 100, height: 50 },
@@ -40,7 +72,6 @@
         mobileNumber: { x: 240, y: 800, width: 200, height: 50 }
     };
 
-    // Coordinates for extracting answers for each section (same as before)
     const questionSections = [
         { x: 284, y: 1640, width: 142, height: 200 },
         { x: 615, y: 1640, width: 118, height: 200 },
@@ -49,23 +80,49 @@
         { x: 1339, y: 1640, width: 173, height: 200 }
     ];
 
-    // Handle file input
-    document.getElementById('fileInput').addEventListener('change', (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                const img = new Image();
-                img.src = e.target.result;
-                img.onload = function () {
-                    processImage(img);
-                };
-            };
-            reader.readAsDataURL(file);
-        }
-    });
+    const correctAnswers = {
+        1: 'A',
+        2: 'C',
+        3: 'B',
+        4: 'D',
+        5: 'A',
+        6: 'C',
+    };
 
-    // Process the image
+    let processedImageMat = null; // Store processed image
+
+    function onOpenCvReady() {
+        console.log("OpenCV.js is ready!");
+
+        document.getElementById('fileInput').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                document.getElementById('fileName').innerText = `Uploaded file: ${file.name}`;
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = function () {
+                        processImage(img);
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Zoom functionality
+        document.getElementById('zoomSlider').addEventListener('input', function () {
+            const zoomLevel = parseFloat(this.value);
+            zoomCanvas(zoomLevel);
+        });
+    }
+
+    if (cv.getBuildInformation) {
+        onOpenCvReady();
+    } else {
+        cv.onRuntimeInitialized = onOpenCvReady;
+    }
+
     function processImage(img) {
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -73,53 +130,104 @@
         canvas.height = img.height;
         ctx.drawImage(img, 0, 0);
 
-        // Initialize OpenCV.js and process the image
         const mat = cv.imread(canvas);
         cv.cvtColor(mat, mat, cv.COLOR_RGBA2GRAY);  // Convert to grayscale
         cv.adaptiveThreshold(mat, mat, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 11, 2);  // Thresholding
 
-        // Add mask and correct answer highlighting (Assume all answers are "A")
-        maskAndHighlight(mat);  // Process image with mask and highlight
+        processedImageMat = mat; // Store processed image for later use
+        maskAndHighlight(mat);  // Mask and highlight answers
+        extractText(mat);  // Extract text using OCR
     }
 
-    // Mask the image and highlight answers (assume all answers are "A")
     function maskAndHighlight(mat) {
-        const maskedMat = new cv.Mat(mat.rows, mat.cols, cv.CV_8UC3, [255, 255, 255]);  // White background (255,255,255)
+        const maskedMat = new cv.Mat(mat.rows, mat.cols, cv.CV_8UC3, [255, 255, 255]);  // White background
 
-        // Process answers and apply mask
         questionSections.forEach((section, sectionIndex) => {
             const sectionImage = mat.roi(new cv.Rect(section.x, section.y, section.width, section.height));
+            const correctAnswer = correctAnswers[sectionIndex + 1];
 
-            // Iterate through 20 questions in each section (Assume "A" for all answers)
             for (let i = 0; i < 20; i++) {
-                const bubbleCoordinates = getBubbleCoordinates('A', i);  // Assume "A" for all answers
+                const bubbleCoordinates = getBubbleCoordinates(correctAnswer, i);
                 const bubble = sectionImage.roi(new cv.Rect(bubbleCoordinates.x, bubbleCoordinates.y, 20, 20));
                 const meanColor = cv.mean(bubble);
 
-                // If the bubble is filled (assumed that filled bubbles are darker), retain it in the masked image
                 if (meanColor[0] < 100) {
-                    // Copy the filled bubble to the masked image (non-white)
                     maskedMat.roi(new cv.Rect(section.x + bubbleCoordinates.x, section.y + bubbleCoordinates.y, 20, 20)).setTo([0, 0, 0]);
                 }
-                bubble.delete();  // Clean up
+                bubble.delete();
             }
-            sectionImage.delete();  // Clean up
+            sectionImage.delete();
         });
 
-        // Show the processed image with mask and highlighted answers
         cv.imshow('canvas', maskedMat);
-        maskedMat.delete();  // Clean up
+        maskedMat.delete();
+
+        // Show download buttons
+        document.getElementById('downloadBtn').style.display = 'inline-block';
+        document.getElementById('downloadBtn').addEventListener('click', () => {
+            downloadImage(canvas);
+        });
+
+        // Enable download of JSON data
+        document.getElementById('downloadDataBtn').style.display = 'inline-block';
+        document.getElementById('downloadDataBtn').addEventListener('click', () => {
+            downloadJSONData();
+        });
     }
 
-    // Get the coordinates for a specific bubble (A, B, C, D) for a question
     function getBubbleCoordinates(option, questionIndex) {
-        const bubbleSpacing = 40;  // The horizontal distance between bubbles (A, B, C, D)
-        const baseX = 50;  // Start X position for question 1
-        const baseY = 40 * questionIndex;  // Start Y position based on the question index
+        const bubbleSpacing = 40;
+        const baseX = 50;
+        const baseY = 40 * questionIndex;
         const offsets = { A: 0, B: 40, C: 80, D: 120 };
         return { x: baseX + offsets[option], y: baseY };
     }
 
+    function extractText(mat) {
+        const ocrCanvas = document.createElement('canvas');
+        const ocrCtx = ocrCanvas.getContext('2d');
+        ocrCanvas.width = mat.cols;
+        ocrCanvas.height = mat.rows;
+
+        // Convert OpenCV mat to canvas for OCR
+        const imageData = new ImageData(new Uint8ClampedArray(mat.data), mat.cols, mat.rows);
+        ocrCtx.putImageData(imageData, 0, 0);
+
+        // Use Tesseract.js for OCR
+        Tesseract.recognize(ocrCanvas, 'eng', {
+            logger: (m) => console.log(m),
+        }).then(({ data: { text } }) => {
+            document.getElementById('result').innerText = text;
+        });
+    }
+
+    function downloadImage(canvas) {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = 'processed_omr.png';
+        link.click();
+    }
+
+    function downloadJSONData() {
+        const jsonData = {
+            answers: correctAnswers,
+            extractedText: document.getElementById('result').innerText,
+        };
+
+        const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'extracted_data.json';
+        link.click();
+    }
+
+    function zoomCanvas(zoomLevel) {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = processedImageMat.cols * zoomLevel;
+        canvas.height = processedImageMat.rows * zoomLevel;
+        ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
+    }
 </script>
 
 </body>
